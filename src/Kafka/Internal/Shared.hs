@@ -31,6 +31,7 @@ import           Foreign.ForeignPtr       (newForeignPtr_)
 import           Foreign.Marshal.Alloc    (alloca)
 import           Foreign.Ptr              (Ptr, nullPtr)
 import           Foreign.Storable         (Storable (peek))
+import qualified Foreign.Marshal.Utils    as FU
 import           Kafka.Consumer.Types     (Timestamp (..))
 import           Kafka.Internal.RdKafka   (RdKafkaMessageT (..), RdKafkaMessageTPtr, RdKafkaRespErrT (..), RdKafkaTimestampTypeT (..), Word8Ptr, rdKafkaErrno2err, rdKafkaMessageTimestamp, rdKafkaPoll, rdKafkaTopicName, rdKafkaHeaderGetAll, rdKafkaMessageHeaders)
 import           Kafka.Internal.Setup     (HasKafka (..), Kafka (..))
@@ -44,7 +45,7 @@ pollEvents a tm =
 
 word8PtrToBS :: Int -> Word8Ptr -> IO BS.ByteString
 word8PtrToBS len ptr = BSI.create len $ \bsptr ->
-    BSI.memcpy bsptr ptr len
+    FU.copyBytes bsptr ptr len
 
 kafkaRespErr :: Errno -> KafkaError
 kafkaRespErr (Errno num) = KafkaResponseError $ rdKafkaErrno2err (fromIntegral num)

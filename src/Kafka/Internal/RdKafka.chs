@@ -1320,6 +1320,7 @@ cIntConv :: (Integral a, Num b) =>  a -> b
 cIntConv = fromIntegral
 {-# INLINE cIntConv #-}
 
+cIntToRespEither :: CInt -> Either RdKafkaRespErrT ()
 cIntToRespEither err =
   case cIntToEnum err of
     RdKafkaRespErrNoError -> Right ()
@@ -1375,7 +1376,7 @@ withForeignPtrs kafkaPtr optPtr queuePtr f =
     withForeignPtr optPtr $ \optPtr' ->
       withForeignPtr queuePtr $ \queuePtr' -> f kafkaPtr' optPtr' queuePtr'
 
-withForeignPtrsArrayLen :: [ForeignPtr a] 
+withForeignPtrsArrayLen :: [ForeignPtr a]
                         -> (Int -> Ptr (Ptr a) -> IO b)
                         -> IO b
 withForeignPtrsArrayLen as f =

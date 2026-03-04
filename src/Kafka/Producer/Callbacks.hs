@@ -40,9 +40,9 @@ deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaC
           s <- peek mptr
           prodRec <- mkProdRec mptr
           let cbPtr = opaque'RdKafkaMessageT s
-          callbacks cbPtr $ 
+          callbacks cbPtr $
             if err'RdKafkaMessageT s /= RdKafkaRespErrNoError
-              then mkErrorReport s prodRec  
+              then mkErrorReport s prodRec
               else mkSuccessReport s prodRec
 
     callbacks cbPtr rep = do
@@ -51,9 +51,8 @@ deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaC
         pure ()
       else bracket (pure $ castPtrToStablePtr cbPtr) freeStablePtr $ \stablePtr -> do
         msgCb <- deRefStablePtr @(DeliveryReport -> IO ()) stablePtr
-        -- Here we fork the callback since it might be a longer action and
-        -- blocking here would block librdkafka from continuing its execution
-        void . forkIO $ msgCb rep
+        -- Note: if this callback blocks, then librdkafka is essentially blocked.
+        msgCb rep
 
 mkErrorReport :: RdKafkaMessageT -> ProducerRecord -> DeliveryReport
 mkErrorReport msg prodRec = DeliveryFailure prodRec (KafkaResponseError (err'RdKafkaMessageT msg))
@@ -63,11 +62,11 @@ mkSuccessReport msg prodRec = DeliverySuccess prodRec (Offset $ offset'RdKafkaMe
 
 mkProdRec :: Ptr RdKafkaMessageT -> IO ProducerRecord
 mkProdRec pmsg = do
-  msg         <- peek pmsg  
+  msg         <- peek pmsg
   topic       <- readTopic msg
   key         <- readKey msg
   payload     <- readPayload msg
-  flip fmap (fromRight mempty <$> readHeaders pmsg) $ \headers -> 
+  flip fmap (fromRight mempty <$> readHeaders pmsg) $ \headers ->
     ProducerRecord
       { prTopic = TopicName topic
       , prPartition = SpecifiedPartition (partition'RdKafkaMessageT msg)
