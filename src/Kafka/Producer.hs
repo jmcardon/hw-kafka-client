@@ -80,7 +80,7 @@ import           Foreign.C.String         (withCString)
 import           Foreign.ForeignPtr       (withForeignPtr)
 import           Foreign.Marshal.Utils    (withMany)
 import           Foreign.Ptr              (Ptr, nullPtr, plusPtr)
-import           Foreign.StablePtr        (newStablePtr, castStablePtrToPtr)
+import           Foreign.StablePtr        (newStablePtr, castStablePtrToPtr, freeStablePtr)
 import           Kafka.Internal.RdKafka   (RdKafkaRespErrT (..), RdKafkaTypeT (..), RdKafkaVuT(..), newRdKafkaT, rdKafkaErrorCode, rdKafkaErrorDestroy, rdKafkaOutqLen, rdKafkaMessageProduceVa, rdKafkaSetLogLevel)
 import           Kafka.Internal.Setup     (Kafka (..), KafkaConf (..), KafkaProps (..), TopicProps (..), kafkaConf, topicConf, Callback(..))
 import           Kafka.Internal.Shared    (pollEvents)
@@ -91,6 +91,7 @@ import           Kafka.Producer.Types     (KafkaProducer (..))
 import Kafka.Producer.ProducerProperties as X
 import Kafka.Producer.Types              as X hiding (KafkaProducer)
 import Kafka.Types                       as X
+import Control.Exception.Base (bracketOnError)
 
 -- | Runs Kafka Producer.
 -- The callback provided is expected to call 'produceMessage'
@@ -187,21 +188,24 @@ produceMessageNoPoll' (KafkaProducer (Kafka k) _ _) msg cb = liftIO $
     withBS (prKey msg) $ \keyPtr keyLength ->
       withHeaders (prHeaders msg) $ \hdrs ->
         withCString (Text.unpack . unTopicName . prTopic $ msg) $ \topicName -> do
-          callbackPtr <- newStablePtr cb
-          let opts = [
-                  Topic'RdKafkaVu topicName
-                , Partition'RdKafkaVu . producePartitionCInt . prPartition $ msg
-                , MsgFlags'RdKafkaVu (fromIntegral copyMsgFlags)
-                , Value'RdKafkaVu payloadPtr (fromIntegral payloadLength)
-                , Key'RdKafkaVu keyPtr (fromIntegral keyLength)
-                , Opaque'RdKafkaVu (castStablePtrToPtr callbackPtr)
-                ]
+          bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
+            let opts = [
+                    Topic'RdKafkaVu topicName
+                  , Partition'RdKafkaVu . producePartitionCInt . prPartition $ msg
+                  , MsgFlags'RdKafkaVu (fromIntegral copyMsgFlags)
+                  , Value'RdKafkaVu payloadPtr (fromIntegral payloadLength)
+                  , Key'RdKafkaVu keyPtr (fromIntegral keyLength)
+                  , Opaque'RdKafkaVu (castStablePtrToPtr callbackPtr)
+                  ]
 
-          code <- bracket (rdKafkaMessageProduceVa k (hdrs ++ opts)) rdKafkaErrorDestroy rdKafkaErrorCode
-          res  <- handleProduceErrT code
-          pure $ case res of
-            Just err -> Left . ImmediateError $ err
-            Nothing -> Right ()
+            code <- bracket (rdKafkaMessageProduceVa k (hdrs ++ opts)) rdKafkaErrorDestroy rdKafkaErrorCode
+            res  <- handleProduceErrT code
+            case res of
+              Just err -> do
+                freeStablePtr callbackPtr
+                pure . Left . ImmediateError $ err
+              Nothing ->
+                pure . Right $ ()
 {-# INLINABLE produceMessageNoPoll' #-}
 
 -- | Closes the producer.
