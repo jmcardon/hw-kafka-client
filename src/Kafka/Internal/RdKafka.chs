@@ -57,7 +57,7 @@ nErrorBytes = 1024 * 8
     {} -> `String' #}
 
 {#fun pure rd_kafka_err2str as ^
-    {enumToCInt `RdKafkaRespErrT'} -> `String' #}
+    {`RdKafkaRespErrT'} -> `String' #}
 
 {#fun pure rd_kafka_err2name as ^
     {enumToCInt `RdKafkaRespErrT'} -> `String' #}
@@ -952,6 +952,9 @@ rdKafkaMetadata k allTopics mt timeout = do
 
 {#fun rd_kafka_poll as ^
     {`RdKafkaTPtr', `Int'} -> `Int' #}
+
+{#fun rd_kafka_flush as ^
+    {`RdKafkaTPtr', `Int'} -> `RdKafkaRespErrT' #}
 
 {#fun rd_kafka_outq_len as ^
     {`RdKafkaTPtr'} -> `Int' #}

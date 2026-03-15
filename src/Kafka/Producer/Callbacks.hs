@@ -6,9 +6,7 @@ module Kafka.Producer.Callbacks
 )
 where
 
-import           Control.Monad          (void)
 import           Control.Exception      (bracket)
-import           Control.Concurrent     (forkIO)
 import           Foreign.C.Error        (getErrno)
 import           Foreign.Ptr            (Ptr, nullPtr)
 import           Foreign.Storable       (Storable(peek))

@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS_GHC -Wno-deriving-typeable #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -13,6 +14,7 @@ module Kafka.Producer.Types
 , ProducePartition(..)
 , DeliveryReport(..)
 , ImmediateError(..)
+, KafkaFlushResult(..)
 )
 where
 
@@ -53,7 +55,7 @@ data ProducerRecord = ProducerRecord
   , prHeaders   :: !Headers
   } deriving (Eq, Show, Typeable, Generic)
 
--- | 
+-- |
 data ProducePartition =
     -- | The partition number of the topic
     SpecifiedPartition {-# UNPACK #-} !Int
@@ -73,4 +75,10 @@ data DeliveryReport
   | DeliveryFailure ProducerRecord KafkaError
     -- | An error occurred, but /librdkafka/ did not attach any sent message
   | NoMessageError KafkaError
+  deriving (Show, Eq, Generic)
+
+
+data KafkaFlushResult
+  = KafkaFlushOk
+  | KafkaFlushTimedOut
   deriving (Show, Eq, Generic)

@@ -66,6 +66,7 @@ module Kafka.Producer
 , closeProducer
 , pollEvents
 , outboundQueueLength
+, flushKafka
 , RdKafkaRespErrT (..)
 )
 where
@@ -81,7 +82,9 @@ import           Foreign.ForeignPtr       (withForeignPtr)
 import           Foreign.Marshal.Utils    (withMany)
 import           Foreign.Ptr              (Ptr, nullPtr, plusPtr)
 import           Foreign.StablePtr        (newStablePtr, castStablePtrToPtr, freeStablePtr)
-import           Kafka.Internal.RdKafka   (RdKafkaRespErrT (..), RdKafkaTypeT (..), RdKafkaVuT(..), newRdKafkaT, rdKafkaErrorCode, rdKafkaErrorDestroy, rdKafkaOutqLen, rdKafkaMessageProduceVa, rdKafkaSetLogLevel)
+import           Kafka.Internal.RdKafka   (RdKafkaRespErrT (..), RdKafkaTypeT (..), RdKafkaVuT(..), newRdKafkaT, rdKafkaErrorCode
+                                          , rdKafkaErrorDestroy, rdKafkaOutqLen, rdKafkaMessageProduceVa, rdKafkaSetLogLevel
+                                          , rdKafkaFlush)
 import           Kafka.Internal.Setup     (Kafka (..), KafkaConf (..), KafkaProps (..), TopicProps (..), kafkaConf, topicConf, Callback(..))
 import           Kafka.Internal.Shared    (pollEvents)
 import           Kafka.Producer.Convert   (copyMsgFlags, handleProduceErrT, producePartitionCInt)
@@ -223,6 +226,12 @@ flushProducer kp = liftIO $ do
     if l == 0
       then pollEvents kp (Just $ Timeout 0) -- to be sure that all the delivery reports are fired
       else flushProducer kp
+
+flushKafka :: MonadIO m => KafkaProducer -> Int -> m KafkaFlushResult
+flushKafka (KafkaProducer (Kafka k) _ _) timeout =
+  liftIO (rdKafkaFlush k timeout) >>= \case
+    RdKafkaRespErrTimedOut -> pure KafkaFlushTimedOut
+    _ -> pure KafkaFlushOk
 ------------------------------------------------------------------------------------
 
 withHeaders :: Headers -> ([RdKafkaVuT] -> IO a) -> IO a

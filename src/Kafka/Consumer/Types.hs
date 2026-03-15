@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS_GHC -Wno-deriving-typeable #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -46,7 +47,7 @@ import Kafka.Internal.Setup (HasKafka (..), HasKafkaConf (..), Kafka (..), Kafka
 import Kafka.Types          (Millis (..), PartitionId (..), TopicName (..), Headers)
 
 -- | The main type for Kafka consumption, used e.g. to poll and commit messages.
--- 
+--
 -- Its constructor is intentionally not exposed, instead, one should use 'Kafka.Consumer.newConsumer' to acquire such a value.
 data KafkaConsumer = KafkaConsumer
   { kcKafkaPtr  :: !Kafka
@@ -61,8 +62,8 @@ instance HasKafkaConf KafkaConsumer where
   getKafkaConf = kcKafkaConf
   {-# INLINE getKafkaConf #-}
 
--- | Consumer group ID. Different consumers with the same consumer group ID will get assigned different partitions of each subscribed topic. 
--- 
+-- | Consumer group ID. Different consumers with the same consumer group ID will get assigned different partitions of each subscribed topic.
+--
 -- See <https://kafka.apache.org/documentation/#group.id Kafka documentation on consumer group>
 newtype ConsumerGroupId = ConsumerGroupId
   { unConsumerGroupId :: Text
@@ -72,7 +73,7 @@ newtype ConsumerGroupId = ConsumerGroupId
 newtype Offset          = Offset { unOffset :: Int64 } deriving (Show, Eq, Ord, Read, Generic)
 
 -- | Where to reset the offset when there is no initial offset in Kafka
--- 
+--
 -- See <https://kafka.apache.org/documentation/#auto.offset.reset Kafka documentation on offset reset>
 data OffsetReset        = Earliest | Latest deriving (Show, Eq, Generic)
 
@@ -103,7 +104,7 @@ data SubscribedPartitions
   | SubscribedPartitionsAll            -- ^ Subscribe to all partitions
   deriving (Show, Eq, Generic)
 
--- | Consumer record timestamp 
+-- | Consumer record timestamp
 data Timestamp =
     CreateTime !Millis
   | LogAppendTime !Millis

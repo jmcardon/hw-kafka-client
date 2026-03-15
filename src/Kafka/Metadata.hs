@@ -122,9 +122,9 @@ watermarkOffsets k timeout t = do
   meta <- topicMetadata k timeout t
   case meta of
     Left err -> return [Left err]
-    Right tm -> if null (kmTopics tm)
-                  then return []
-                  else watermarkOffsets' k timeout (head $ kmTopics tm)
+    Right tm -> case kmTopics tm of
+      [] -> pure []
+      h : _ -> watermarkOffsets' k timeout h
 
 -- | Query broker for low (oldest/beginning) and high (newest/end) offsets for a given topic.
 watermarkOffsets' :: (MonadIO m, HasKafka k) => k -> Timeout -> TopicMetadata -> m [Either KafkaError WatermarkOffsets]

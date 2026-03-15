@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# OPTIONS_GHC -Wno-deriving-typeable #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -47,7 +48,7 @@ newtype PartitionId = PartitionId { unPartitionId :: Int } deriving (Show, Eq, R
 newtype Millis      = Millis { unMillis :: Int64 } deriving (Show, Read, Eq, Ord, Num, Generic)
 
 -- | Client ID used by Kafka to better track requests
--- 
+--
 -- See <https://kafka.apache.org/documentation/#client.id Kafka documentation on client ID>
 newtype ClientId = ClientId
   { unClientId :: Text
@@ -126,7 +127,7 @@ data KafkaDebug =
 
 -- | Convert a 'KafkaDebug' into its /librdkafka/ string equivalent.
 --
--- This is used internally by the library but may be useful to some developers. 
+-- This is used internally by the library but may be useful to some developers.
 kafkaDebugToText :: KafkaDebug -> Text
 kafkaDebugToText d = case d of
   DebugGeneric  -> "generic"
@@ -161,11 +162,11 @@ kafkaCompressionCodecToText c = case c of
   NoCompression -> "none"
   Gzip          -> "gzip"
   Snappy        -> "snappy"
-  Lz4           -> "lz4" 
+  Lz4           -> "lz4"
   Zstd          -> "zstd"
 
 -- | Headers that might be passed along with a record
-newtype Headers = Headers { unHeaders :: [(BS.ByteString, BS.ByteString)] } 
+newtype Headers = Headers { unHeaders :: [(BS.ByteString, BS.ByteString)] }
   deriving (Eq, Show, Semigroup, Monoid, Read, Typeable, Generic)
 
 headersFromList :: [(BS.ByteString, BS.ByteString)] -> Headers
