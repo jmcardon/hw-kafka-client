@@ -12,6 +12,7 @@ module Kafka.Consumer.Convert
 , topicPartitionFromMessageForCommit
 , toMap
 , fromMessagePtr
+, fromMessagePtrZeroCopy
 , offsetCommitToBool
 )
 where
@@ -25,6 +26,8 @@ import qualified Data.Set               as S
 import qualified Data.Text              as Text
 import           Foreign.Ptr            (Ptr, nullPtr)
 import           Foreign.ForeignPtr     (withForeignPtr)
+import qualified Foreign.Concurrent    as FC
+import qualified Data.ByteString.Internal as BSI
 import           Foreign.Storable       (Storable(..))
 import           Foreign.C.Error        (getErrno)
 import           Kafka.Consumer.Types   (ConsumerRecord(..), TopicPartition(..), Offset(..), OffsetCommit(..), PartitionOffset(..), OffsetStoreSync(..))
@@ -110,7 +113,7 @@ toNativeTopicPartitionList ps = do
         let TopicName tn = tpTopicName p
             (PartitionId tp) = tpPartition p
             to = offsetToInt64 $ tpOffset p
-            tnS = Text.unpack tn 
+            tnS = Text.unpack tn
         _ <- rdKafkaTopicPartitionListAdd pl tnS tp
         rdKafkaTopicPartitionListSetOffset pl tnS tp to) ps
     return pl
@@ -122,7 +125,7 @@ toNativeTopicPartitionListNoDispose ps = do
         let TopicName tn = tpTopicName p
             (PartitionId tp) = tpPartition p
             to = offsetToInt64 $ tpOffset p
-            tnS = Text.unpack tn 
+            tnS = Text.unpack tn
         _ <- rdKafkaTopicPartitionListAdd pl tnS tp
         rdKafkaTopicPartitionListSetOffset pl tnS tp to) ps
     return pl
@@ -178,6 +181,56 @@ fromMessagePtr ptr =
                 , crKey       = key
                 , crValue     = payload
                 }
+
+-- | Like 'fromMessagePtr' but avoids copying the message payload.
+-- The payload 'BS.ByteString' points directly into librdkafka's buffer.
+-- The C message is destroyed when the payload ByteString is garbage collected.
+--
+-- Small fields (key, topic, headers) are still copied.
+--
+-- WARNING: Any slice of the payload ByteString (e.g. from protobuf
+-- decoding) keeps the entire C message alive. Callers should 'BS.copy'
+-- fields they intend to store long-term.
+fromMessagePtrZeroCopy :: RdKafkaMessageTPtr -> IO (Either KafkaError (ConsumerRecord (Maybe BS.ByteString) (Maybe BS.ByteString)))
+fromMessagePtrZeroCopy ptr =
+    withForeignPtr ptr $ \realPtr ->
+    if realPtr == nullPtr then Left . kafkaRespErr <$> getErrno
+    else do
+        s <- peek realPtr
+        if err'RdKafkaMessageT s /= RdKafkaRespErrNoError
+            then do
+                rdKafkaMessageDestroy realPtr
+                return . Left . KafkaResponseError $ err'RdKafkaMessageT s
+            else do
+                -- Read small fields first (copied — cheap, independent of C message lifetime)
+                topic     <- readTopic s
+                key       <- readKey s
+                timestamp <- readTimestamp ptr
+                headers   <- fromRight mempty <$> readHeaders realPtr
+
+                -- Zero-copy payload: wrap C buffer, destroy message when GC'd
+                payload <- zeroCopyPayload realPtr s
+
+                return . Right $ ConsumerRecord
+                    { crTopic     = TopicName topic
+                    , crPartition = PartitionId $ partition'RdKafkaMessageT s
+                    , crOffset    = Offset $ offset'RdKafkaMessageT s
+                    , crTimestamp = timestamp
+                    , crHeaders   = headers
+                    , crKey       = key
+                    , crValue     = payload
+                    }
+    where
+        zeroCopyPayload :: Ptr RdKafkaMessageT -> RdKafkaMessageT -> IO (Maybe BS.ByteString)
+        zeroCopyPayload realPtr s
+            | payload'RdKafkaMessageT s == nullPtr = do
+                rdKafkaMessageDestroy realPtr
+                pure Nothing
+            | otherwise = do
+                let !payloadPtr = payload'RdKafkaMessageT s
+                    !payloadLen = len'RdKafkaMessageT s
+                fptr <- FC.newForeignPtr payloadPtr (rdKafkaMessageDestroy realPtr)
+                pure . Just $! BSI.BS fptr payloadLen
 
 offsetCommitToBool :: OffsetCommit -> Bool
 offsetCommitToBool OffsetCommit      = False

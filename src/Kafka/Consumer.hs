@@ -58,6 +58,7 @@ module Kafka.Consumer
 , committed, position, seek, seekPartitions
 , pollMessage, pollConsumerEvents
 , pollMessageBatch
+, pollMessageBatchZeroCopy
 , commitOffsetMessage, commitAllOffsets, commitPartitionsOffsets
 , storeOffsets, storeOffsetMessage
 , rewindConsumer
@@ -82,7 +83,7 @@ import           Data.Set                   (Set)
 import qualified Data.Set                   as Set
 import qualified Data.Text                  as Text
 import           Foreign                    hiding (void)
-import           Kafka.Consumer.Convert     (fromMessagePtr, fromNativeTopicPartitionList'', offsetCommitToBool, offsetToInt64, toMap, toNativeTopicPartitionList, toNativeTopicPartitionList', topicPartitionFromMessageForCommit)
+import           Kafka.Consumer.Convert     (fromMessagePtr, fromMessagePtrZeroCopy, fromNativeTopicPartitionList'', offsetCommitToBool, offsetToInt64, toMap, toNativeTopicPartitionList, toNativeTopicPartitionList', topicPartitionFromMessageForCommit)
 import           Kafka.Consumer.Types       (KafkaConsumer (..))
 import           Kafka.Internal.RdKafka     (RdKafkaRespErrT (..), RdKafkaTopicPartitionListTPtr, RdKafkaTypeT (..), rdKafkaSeekPartitions, rdKafkaErrorDestroy, rdKafkaErrorCode, newRdKafkaT, newRdKafkaTopicPartitionListT, newRdKafkaTopicT, rdKafkaAssign, rdKafkaAssignment, rdKafkaCommit, rdKafkaCommitted, rdKafkaConfSetDefaultTopicConf, rdKafkaConsumeBatchQueue, rdKafkaConsumeQueue, rdKafkaConsumerClose, rdKafkaConsumerPoll, rdKafkaOffsetsStore, rdKafkaPausePartitions, rdKafkaPollSetConsumer, rdKafkaPosition, rdKafkaQueueDestroy, rdKafkaQueueNew, rdKafkaResumePartitions, rdKafkaSeek, rdKafkaSetLogLevel, rdKafkaSubscribe, rdKafkaSubscription, rdKafkaTopicConfDup, rdKafkaTopicPartitionListAdd)
 import           Kafka.Internal.Setup       (CallbackPollStatus (..), Kafka (..), KafkaConf (..), KafkaProps (..), TopicConf (..), TopicProps (..), getKafkaConf, getRdKafka, kafkaConf, topicConf, Callback(..))
@@ -191,6 +192,24 @@ pollMessageBatch c@(KafkaConsumer _ (KafkaConf _ qr _)) (Timeout ms) (BatchSize 
   case mbq of
     Nothing -> return [Left $ KafkaBadSpecification "Calling pollMessageBatch while CallbackPollMode is set to CallbackPollModeSync."]
     Just q  -> whileNoCallbackRunning c $ rdKafkaConsumeBatchQueue q ms b >>= traverse fromMessagePtr
+
+-- | Like 'pollMessageBatch' but avoids copying message payloads.
+-- Payload ByteStrings point directly into librdkafka's buffers.
+-- The C message is freed when the payload ByteString is garbage collected.
+--
+-- WARNING: Any slice of a payload ByteString keeps the entire C message
+-- alive. Use 'BS.copy' on fields stored long-term.
+pollMessageBatchZeroCopy :: MonadIO m
+                 => KafkaConsumer
+                 -> Timeout
+                 -> BatchSize
+                 -> m [Either KafkaError (ConsumerRecord (Maybe BS.ByteString) (Maybe BS.ByteString))]
+pollMessageBatchZeroCopy c@(KafkaConsumer _ (KafkaConf _ qr _)) (Timeout ms) (BatchSize b) = liftIO $ do
+  pollConsumerEvents c Nothing
+  mbq <- readIORef qr
+  case mbq of
+    Nothing -> return [Left $ KafkaBadSpecification "Calling pollMessageBatchZeroCopy while CallbackPollMode is set to CallbackPollModeSync."]
+    Just q  -> whileNoCallbackRunning c $ rdKafkaConsumeBatchQueue q ms b >>= traverse fromMessagePtrZeroCopy
 
 -- | Commit message's offset on broker for the message's partition.
 commitOffsetMessage :: MonadIO m
