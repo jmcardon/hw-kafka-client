@@ -1,6 +1,5 @@
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE ViewPatterns               #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -229,7 +228,7 @@ flushProducer kp = liftIO $ do
       else flushProducer kp
 
 flushProducerWithTimeout :: MonadIO m => KafkaProducer -> Timeout -> m KafkaFlushResult
-flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (unTimeout -> timeout) =
+flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (Timeout timeout) =
   liftIO (rdKafkaFlush k timeout) >>= \case
     RdKafkaRespErrTimedOut -> pure KafkaFlushTimedOut
     _ -> pure KafkaFlushOk
