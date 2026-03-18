@@ -1,5 +1,6 @@
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -66,7 +67,7 @@ module Kafka.Producer
 , closeProducer
 , pollEvents
 , outboundQueueLength
-, flushKafka
+, flushProducerWithTimeout
 , RdKafkaRespErrT (..)
 )
 where
@@ -227,8 +228,8 @@ flushProducer kp = liftIO $ do
       then pollEvents kp (Just $ Timeout 0) -- to be sure that all the delivery reports are fired
       else flushProducer kp
 
-flushKafka :: MonadIO m => KafkaProducer -> Int -> m KafkaFlushResult
-flushKafka (KafkaProducer (Kafka k) _ _) timeout =
+flushProducerWithTimeout :: MonadIO m => KafkaProducer -> Timeout -> m KafkaFlushResult
+flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (unTimeout -> timeout) =
   liftIO (rdKafkaFlush k timeout) >>= \case
     RdKafkaRespErrTimedOut -> pure KafkaFlushTimedOut
     _ -> pure KafkaFlushOk
