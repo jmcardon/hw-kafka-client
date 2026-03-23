@@ -68,12 +68,12 @@ library
                         Kafka.Producer.Types
                         Kafka.Transaction
                         Kafka.Types
-  other-modules:        Kafka.Callbacks
-                        Kafka.Consumer.Callbacks
-                        Kafka.Consumer.Convert
                         Kafka.Internal.RdKafka
                         Kafka.Internal.Setup
                         Kafka.Internal.Shared
+  other-modules:        Kafka.Callbacks
+                        Kafka.Consumer.Callbacks
+                        Kafka.Consumer.Convert
                         Kafka.Producer.Callbacks
                         Kafka.Producer.Convert
   default-language:     Haskell2010
@@ -135,4 +135,5 @@ test-suite tests
   build-tool-depends:   hspec-discover:hspec-discover
   other-modules:        Kafka.Consumer.ConsumerRecordMapSpec
                         Kafka.Consumer.ConsumerRecordTraverseSpec
+                        Kafka.MockClusterSpec
   default-language:     Haskell2010

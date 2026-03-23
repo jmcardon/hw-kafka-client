@@ -7,6 +7,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Control.Exception (bracket)
 import Control.Monad (liftM)
 import Data.Int (Int32, Int64)
 import Data.Word (Word8)
@@ -24,6 +25,7 @@ import System.Posix.IO (handleToFd)
 import System.Posix.Types (Fd(..))
 
 #include <librdkafka/rdkafka.h>
+#include <librdkafka/rdkafka_mock.h>
 
 type CInt64T = {#type int64_t #}
 type CInt32T = {#type int32_t #}
@@ -1309,6 +1311,74 @@ rdKafkaDeleteTopicsResultTopics tRes =
       size <- peekIntConv sPtr
       arr <- peekArray size res
       traverse unpackRdKafkaTopicResult arr
+
+-- Mock Cluster
+data RdKafkaMockClusterT
+{#pointer *rd_kafka_mock_cluster_t as RdKafkaMockClusterTPtr foreign -> RdKafkaMockClusterT #}
+
+-- Raw c2hs bindings (internal)
+{#fun rd_kafka_mock_cluster_new as rdKafkaMockClusterNew'
+    {`RdKafkaTPtr', `Int'} -> `RdKafkaMockClusterTPtr' #}
+
+{#fun rd_kafka_mock_cluster_destroy as rdKafkaMockClusterDestroy'
+    {`RdKafkaMockClusterTPtr'} -> `()' #}
+
+{#fun rd_kafka_handle_mock_cluster as rdKafkaHandleMockCluster'
+    {`RdKafkaTPtr'} -> `RdKafkaMockClusterTPtr' #}
+
+{#fun rd_kafka_mock_cluster_bootstraps as rdKafkaMockClusterBootstraps
+    {`RdKafkaMockClusterTPtr'} -> `String' #}
+
+{#fun rd_kafka_mock_topic_create as rdKafkaMockTopicCreate
+    {`RdKafkaMockClusterTPtr', `String', `Int', `Int'} -> `RdKafkaRespErrT' #}
+
+{#fun rd_kafka_mock_topic_set_error as rdKafkaMockTopicSetError
+    {`RdKafkaMockClusterTPtr', `String', enumToCInt `RdKafkaRespErrT'} -> `()' #}
+
+{#fun rd_kafka_mock_broker_set_down as rdKafkaMockBrokerSetDown
+    {`RdKafkaMockClusterTPtr', cIntConv `Int'} -> `RdKafkaRespErrT' #}
+
+{#fun rd_kafka_mock_broker_set_up as rdKafkaMockBrokerSetUp
+    {`RdKafkaMockClusterTPtr', cIntConv `Int'} -> `RdKafkaRespErrT' #}
+
+{#fun rd_kafka_mock_broker_set_rtt as rdKafkaMockBrokerSetRtt
+    {`RdKafkaMockClusterTPtr', cIntConv `Int', `Int'} -> `RdKafkaRespErrT' #}
+
+{#fun rd_kafka_mock_clear_request_errors as rdKafkaMockClearRequestErrors
+    {`RdKafkaMockClusterTPtr', cIntConv `Int'} -> `()' #}
+
+{#fun rd_kafka_mock_push_request_errors_array as rdKafkaMockPushRequestErrorsArray
+    {`RdKafkaMockClusterTPtr', cIntConv `Int', cIntConv `Int', id `Ptr CInt'} -> `()' #}
+
+-- | Bracket for an explicitly created mock cluster.
+-- Creates @brokerCnt@ brokers, runs the action, destroys the cluster on exit.
+withMockCluster :: RdKafkaTPtr -> Int -> (RdKafkaMockClusterTPtr -> IO a) -> IO a
+withMockCluster rk brokerCnt = bracket acquire rdKafkaMockClusterDestroy'
+  where
+    acquire = do
+      mc <- rdKafkaMockClusterNew' rk brokerCnt
+      withForeignPtr mc $ \p ->
+        if p == nullPtr
+          then error "rd_kafka_mock_cluster_new returned NULL"
+          else return mc
+
+-- | Access the mock cluster owned by an rd_kafka_t configured with
+-- @test.mock.num.brokers@. The cluster is NOT destroyed by this function —
+-- it lives as long as the rd_kafka_t does.
+-- Keeps @rk@ alive for the duration of @f@ so the cluster pointer stays valid.
+withHandleMockCluster :: RdKafkaTPtr -> (RdKafkaMockClusterTPtr -> IO a) -> IO (Maybe a)
+withHandleMockCluster rk f =
+  withForeignPtr rk $ \_ -> do
+    mc <- rdKafkaHandleMockCluster' rk
+    withForeignPtr mc $ \p ->
+      if p == nullPtr
+        then return Nothing
+        else Just <$> f mc
+
+rdKafkaMockPushRequestErrors :: RdKafkaMockClusterTPtr -> Int -> [RdKafkaRespErrT] -> IO ()
+rdKafkaMockPushRequestErrors mcluster apiKey errs =
+  withArrayLen (map enumToCInt errs) $ \len ptr ->
+    rdKafkaMockPushRequestErrorsArray mcluster apiKey len ptr
 
 -- Marshall / Unmarshall
 enumToCInt :: Enum a => a -> CInt
