@@ -19,6 +19,7 @@ import           Kafka.Internal.Shared  (kafkaRespErr, readTopic, readKey, readP
 import           Kafka.Producer.Types   (ProducerRecord(..), DeliveryReport(..), ProducePartition(..))
 import           Kafka.Types            (KafkaError(..), TopicName(..))
 import Data.Either (fromRight)
+import Debug.Trace
 
 -- | Sets the callback for delivery reports.
 --
@@ -45,7 +46,8 @@ deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaC
 
     callbacks cbPtr rep = do
       callback rep
-      if cbPtr == nullPtr then
+      if cbPtr == nullPtr then do
+        traceIO "callback Ptr is null"
         pure ()
       else bracket (pure $ castPtrToStablePtr cbPtr) freeStablePtr $ \stablePtr -> do
         msgCb <- deRefStablePtr @(DeliveryReport -> IO ()) stablePtr
