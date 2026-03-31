@@ -11,6 +11,7 @@ import           Foreign.C.Error        (getErrno)
 import           Foreign.Ptr            (Ptr, nullPtr)
 import           Foreign.Storable       (Storable(peek))
 import           Foreign.StablePtr      (castPtrToStablePtr, deRefStablePtr, freeStablePtr)
+import           Control.Concurrent     (myThreadId)
 import           Kafka.Callbacks        as X
 import           Kafka.Consumer.Types   (Offset(..))
 import           Kafka.Internal.RdKafka (RdKafkaMessageT(..), RdKafkaRespErrT(..), rdKafkaConfSetDrMsgCb)
@@ -32,13 +33,19 @@ deliveryCallback :: (DeliveryReport -> IO ()) -> Callback
 deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaConf kc) realCb
   where
     realCb :: t -> Ptr RdKafkaMessageT -> IO ()
-    realCb _ mptr =
+    realCb _ mptr = do
+      tid <- myThreadId
       if mptr == nullPtr
-        then getErrno >>= (callback . NoMessageError . kafkaRespErr)
+        then do
+          traceIO $ "[dr_msg_cb] called with NULL mptr on thread " ++ show tid
+          getErrno >>= (callback . NoMessageError . kafkaRespErr)
         else do
           s <- peek mptr
           prodRec <- mkProdRec mptr
           let cbPtr = opaque'RdKafkaMessageT s
+          traceIO $ "[dr_msg_cb] called on thread " ++ show tid
+            ++ " cbPtr=" ++ show cbPtr
+            ++ " err=" ++ show (err'RdKafkaMessageT s)
           callbacks cbPtr $
             if err'RdKafkaMessageT s /= RdKafkaRespErrNoError
               then mkErrorReport s prodRec
@@ -47,12 +54,13 @@ deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaC
     callbacks cbPtr rep = do
       callback rep
       if cbPtr == nullPtr then do
-        traceIO "callback Ptr is null"
+        traceIO "[dr_msg_cb] cbPtr is NULL — skipping per-message callback"
         pure ()
-      else bracket (pure $ castPtrToStablePtr cbPtr) freeStablePtr $ \stablePtr -> do
-        msgCb <- deRefStablePtr @(DeliveryReport -> IO ()) stablePtr
-        -- Note: if this callback blocks, then librdkafka is essentially blocked.
-        msgCb rep
+      else do
+        traceIO "[dr_msg_cb] invoking per-message callback via StablePtr"
+        bracket (pure $ castPtrToStablePtr cbPtr) freeStablePtr $ \stablePtr -> do
+          msgCb <- deRefStablePtr @(DeliveryReport -> IO ()) stablePtr
+          msgCb rep
 
 mkErrorReport :: RdKafkaMessageT -> ProducerRecord -> DeliveryReport
 mkErrorReport msg prodRec = DeliveryFailure prodRec (KafkaResponseError (err'RdKafkaMessageT msg))

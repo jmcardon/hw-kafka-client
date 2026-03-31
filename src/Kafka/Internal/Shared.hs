@@ -20,7 +20,8 @@ module Kafka.Internal.Shared
 where
 
 import           Control.Exception        (throw)
-import           Control.Monad            (void)
+import           Control.Monad            (when)
+import           Debug.Trace              (traceIO)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Internal as BSI
 import           Data.Text                (Text)
@@ -41,7 +42,9 @@ pollEvents :: HasKafka a => a -> Maybe Timeout -> IO ()
 pollEvents a tm =
   let timeout = maybe 0 unTimeout tm
       Kafka k = getKafka a
-  in void (rdKafkaPoll k timeout)
+  in do
+    n <- rdKafkaPoll k timeout
+    traceIO $ "[pollEvents] served " ++ show n ++ " events (timeout=" ++ show timeout ++ ")"
 
 word8PtrToBS :: Int -> Word8Ptr -> IO BS.ByteString
 word8PtrToBS len ptr = BSI.create len $ \bsptr ->

@@ -95,6 +95,7 @@ import Kafka.Producer.ProducerProperties as X
 import Kafka.Producer.Types              as X hiding (KafkaProducer)
 import Kafka.Types                       as X
 import Control.Exception.Base (bracketOnError)
+import Debug.Trace (traceIO)
 
 -- | Runs Kafka Producer.
 -- The callback provided is expected to call 'produceMessage'
@@ -228,10 +229,16 @@ flushProducer kp = liftIO $ do
       else flushProducer kp
 
 flushProducerWithTimeout :: MonadIO m => KafkaProducer -> Timeout -> m KafkaFlushResult
-flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (Timeout timeout) =
-  liftIO (rdKafkaFlush k timeout) >>= \case
-    RdKafkaRespErrTimedOut -> pure KafkaFlushTimedOut
-    _ -> pure KafkaFlushOk
+flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (Timeout timeout) = liftIO $ do
+  traceIO $ "[flushProducerWithTimeout] flushing with timeout=" ++ show timeout
+  result <- rdKafkaFlush k timeout
+  case result of
+    RdKafkaRespErrTimedOut -> do
+      traceIO "[flushProducerWithTimeout] result=TimedOut"
+      pure KafkaFlushTimedOut
+    _ -> do
+      traceIO "[flushProducerWithTimeout] result=Ok"
+      pure KafkaFlushOk
 ------------------------------------------------------------------------------------
 
 withHeaders :: Headers -> ([RdKafkaVuT] -> IO a) -> IO a
