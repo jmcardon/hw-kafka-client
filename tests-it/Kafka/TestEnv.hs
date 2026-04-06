@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -61,8 +62,8 @@ testSubscription :: TopicName -> Subscription
 testSubscription t = topics [t]
               <> offsetReset Earliest
 
-mkProducer :: IO KafkaProducer
-mkProducer = newProducer producerProps >>= \(Right p) -> pure p
+mkProducer :: IO (KafkaProducer 'NoCallbacks)
+mkProducer = newProducer NoDeliveryCallback producerProps >>= \(Right p) -> pure p
 
 mkConsumerWith :: ConsumerProperties -> IO KafkaConsumer
 mkConsumerWith props = do
@@ -82,10 +83,10 @@ specWithConsumer s p f =
   $ afterAll (void . closeConsumer)
   $ describe s f
 
-specWithProducer :: String -> SpecWith KafkaProducer -> Spec
+specWithProducer :: String -> SpecWith (KafkaProducer 'NoCallbacks) -> Spec
 specWithProducer s f = beforeAll mkProducer $ afterAll (void . closeProducer) $ describe s f
 
-specWithKafka :: String -> ConsumerProperties -> SpecWith (KafkaConsumer, KafkaProducer) -> Spec
+specWithKafka :: String -> ConsumerProperties -> SpecWith (KafkaConsumer, KafkaProducer 'NoCallbacks) -> Spec
 specWithKafka s p f =
   beforeAll ((,) <$> mkConsumerWith p <*> mkProducer)
     $ afterAll (\(consumer, producer) -> void $ closeProducer producer >> closeConsumer consumer)

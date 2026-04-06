@@ -1102,10 +1102,6 @@ instance Storable RdKafkaVuT where
 {#fun rd_kafka_produceva as rdKafkaMessageProduceVa'
     {`RdKafkaTPtr', `RdKafkaVuTPtr', `CLong'} -> `RdKafkaErrorTPtr' #}
 
-rdKafkaMessageProduceVa :: RdKafkaTPtr -> [RdKafkaVuT] -> IO RdKafkaErrorTPtr
-rdKafkaMessageProduceVa kafkaPtr vts = withArrayLen vts $ \i arrPtr -> do
-    fptr <- newForeignPtr_ arrPtr
-    rdKafkaMessageProduceVa' kafkaPtr fptr (cIntConv i)
 
 --- Transactional api
 

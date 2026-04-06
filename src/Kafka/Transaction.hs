@@ -40,7 +40,7 @@ data TxError = TxError
 
 -- | Initialises Kafka for transactions 
 initTransactions :: MonadIO m 
-                 => KafkaProducer 
+                 => KafkaProducer s 
                  -> Timeout 
                  -> m (Maybe KafkaError)
 initTransactions p (Timeout to) 
@@ -48,7 +48,7 @@ initTransactions p (Timeout to)
 
 -- | Begins a new transaction
 beginTransaction :: MonadIO m 
-                 => KafkaProducer 
+                 => KafkaProducer s 
                  -> m (Maybe KafkaError)
 beginTransaction p 
   = liftIO $ rdKafkaBeginTransaction (getRdKafka p) >>= rdKafkaErrorCode >>= handleProduceErrT
@@ -56,7 +56,7 @@ beginTransaction p
 -- | Commits an existing transaction
 -- Pre-condition: there exists an open transaction, created with beginTransaction
 commitTransaction :: MonadIO m 
-                  => KafkaProducer 
+                  => KafkaProducer s 
                   -> Timeout 
                   -> m (Maybe TxError)
 commitTransaction p (Timeout to) = liftIO $ rdKafkaCommitTransaction (getRdKafka p) to >>= toTxError
@@ -64,7 +64,7 @@ commitTransaction p (Timeout to) = liftIO $ rdKafkaCommitTransaction (getRdKafka
 -- | Aborts an existing transaction
 -- Pre-condition: there exists an open transaction, created with beginTransaction
 abortTransaction :: MonadIO m 
-                 => KafkaProducer 
+                 => KafkaProducer s 
                  -> Timeout 
                  -> m (Maybe KafkaError)
 abortTransaction p (Timeout to) 
@@ -74,7 +74,7 @@ abortTransaction p (Timeout to)
 --    Similar to Kafka.Consumer.commitOffsetMessage but within a transactional context
 -- Pre-condition: there exists an open transaction, created with beginTransaction
 commitOffsetMessageTransaction :: MonadIO m 
-                               => KafkaProducer 
+                               => KafkaProducer s 
                                -> KafkaConsumer 
                                -> ConsumerRecord k v
                                -> Timeout 
@@ -87,7 +87,7 @@ commitOffsetMessageTransaction p c m (Timeout to) = liftIO $ do
 -- --    Similar to Kafka.Consumer.commitAllOffsets but within a transactional context
 -- -- Pre-condition: there exists an open transaction, created with beginTransaction
 -- commitAllOffsetsTransaction :: MonadIO m 
---                             => KafkaProducer 
+--                             => KafkaProducer s 
 --                             -> KafkaConsumer 
 --                             -> Timeout 
 --                             -> m (Maybe TxError)

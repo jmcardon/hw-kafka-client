@@ -1,7 +1,10 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
 {-# OPTIONS_GHC -Wno-deriving-typeable #-}
 
 -----------------------------------------------------------------------------
@@ -10,6 +13,8 @@
 -----------------------------------------------------------------------------
 module Kafka.Producer.Types
 ( KafkaProducer(..)
+, SupportsCallback(..)
+, DeliveryCallback(..)
 , ProducerRecord(..)
 , ProducePartition(..)
 , DeliveryReport(..)
@@ -25,24 +30,35 @@ import Kafka.Consumer.Types (Offset (..))
 import Kafka.Internal.Setup (HasKafka (..), HasKafkaConf (..), HasTopicConf (..), Kafka (..), KafkaConf (..), TopicConf (..))
 import Kafka.Types          (KafkaError (..), TopicName (..), Headers)
 
+-- | Whether a 'KafkaProducer' supports delivery report callbacks.
+data SupportsCallback = HasCallbacks | NoCallbacks
+
+-- | GADT that carries an optional delivery callback, determining
+-- the 'SupportsCallback' tag at the type level.
+data DeliveryCallback (s :: SupportsCallback) where
+  NoDeliveryCallback   :: DeliveryCallback 'NoCallbacks
+  WithDeliveryCallback :: (DeliveryReport -> IO ()) -> DeliveryCallback 'HasCallbacks
+
 -- | The main type for Kafka message production, used e.g. to send messages.
 --
 -- Its constructor is intentionally not exposed, instead, one should used 'Kafka.Producer.newProducer' to acquire such a value.
-data KafkaProducer = KafkaProducer
+--
+-- The type parameter @s@ tracks whether this producer supports delivery report callbacks.
+data KafkaProducer (s :: SupportsCallback) = KafkaProducer
   { kpKafkaPtr  :: !Kafka
   , kpKafkaConf :: !KafkaConf
   , kpTopicConf :: !TopicConf
   }
 
-instance HasKafka KafkaProducer where
+instance HasKafka (KafkaProducer s) where
   getKafka = kpKafkaPtr
   {-# INLINE getKafka #-}
 
-instance HasKafkaConf KafkaProducer where
+instance HasKafkaConf (KafkaProducer s) where
   getKafkaConf = kpKafkaConf
   {-# INLINE getKafkaConf #-}
 
-instance HasTopicConf KafkaProducer where
+instance HasTopicConf (KafkaProducer s) where
   getTopicConf = kpTopicConf
   {-# INLINE getTopicConf #-}
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -18,8 +19,10 @@ import Data.Text               (Text)
 producerProps :: ProducerProperties
 producerProps = brokersList ["localhost:9092"]
              <> sendTimeout (Timeout 10000)
-             <> setCallback (deliveryCallback print)
              <> logLevel KafkaLogDebug
+
+producerDelivery :: DeliveryCallback 'HasCallbacks
+producerDelivery = deliveryCallback print
 
 -- Topic to send messages to
 targetTopic :: TopicName
@@ -39,13 +42,13 @@ runProducerExample :: IO ()
 runProducerExample =
     bracket mkProducer clProducer runHandler >>= print
     where
-      mkProducer = newProducer producerProps
+      mkProducer = newProducer producerDelivery producerProps
       clProducer (Left _)     = return ()
       clProducer (Right prod) = closeProducer prod
       runHandler (Left err)   = return $ Left err
       runHandler (Right prod) = sendMessages prod
 
-sendMessages :: KafkaProducer -> IO (Either KafkaError ())
+sendMessages :: KafkaProducer s -> IO (Either KafkaError ())
 sendMessages prod = do
   putStrLn "Producer is ready, send your messages!"
   msg1 <- getLine
@@ -74,7 +77,7 @@ sendMessages prod = do
 --   function
 --
 sendMessageSync :: MonadIO m
-                => KafkaProducer
+                => KafkaProducer 'HasCallbacks
                 -> ProducerRecord
                 -> m (Either KafkaError Offset)
 sendMessageSync producer record = liftIO $ do

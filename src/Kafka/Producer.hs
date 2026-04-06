@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE LambdaCase                 #-}
 
@@ -27,7 +29,7 @@
 -- runProducerExample =
 --     bracket mkProducer clProducer runHandler >>= print
 --     where
---       mkProducer = 'newProducer' producerProps
+--       mkProducer = 'newProducer' 'NoDeliveryCallback' producerProps
 --       clProducer (Left _)     = pure ()
 --       clProducer (Right prod) = 'closeProducer' prod
 --       runHandler (Left err)   = pure $ Left err
@@ -78,12 +80,13 @@ import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Internal as BSI
 import qualified Data.Text                as Text
 import           Foreign.C.String         (withCString)
-import           Foreign.ForeignPtr       (withForeignPtr)
-import           Foreign.Marshal.Utils    (withMany)
+import           Foreign.ForeignPtr       (newForeignPtr_, withForeignPtr)
+import           Foreign.Marshal.Alloc    (allocaBytes)
 import           Foreign.Ptr              (Ptr, nullPtr, plusPtr)
 import           Foreign.StablePtr        (newStablePtr, castStablePtrToPtr, freeStablePtr)
+import           Foreign.Storable         (Storable(sizeOf), pokeElemOff)
 import           Kafka.Internal.RdKafka   (RdKafkaRespErrT (..), RdKafkaTypeT (..), RdKafkaVuT(..), newRdKafkaT, rdKafkaErrorCode
-                                          , rdKafkaErrorDestroy, rdKafkaOutqLen, rdKafkaMessageProduceVa, rdKafkaSetLogLevel
+                                          , rdKafkaErrorDestroy, rdKafkaOutqLen, rdKafkaMessageProduceVa', rdKafkaSetLogLevel
                                           , rdKafkaFlush)
 import           Kafka.Internal.Setup     (Kafka (..), KafkaConf (..), KafkaProps (..), TopicProps (..), kafkaConf, topicConf, Callback(..))
 import           Kafka.Internal.Shared    (pollEvents)
@@ -101,12 +104,12 @@ import Control.Exception.Base (bracketOnError)
 -- to send messages to Kafka.
 {-# DEPRECATED runProducer "Use 'newProducer'/'closeProducer' instead" #-}
 runProducer :: ProducerProperties
-            -> (KafkaProducer -> IO (Either KafkaError a))
+            -> (KafkaProducer 'NoCallbacks -> IO (Either KafkaError a))
             -> IO (Either KafkaError a)
 runProducer props f =
   bracket mkProducer clProducer runHandler
   where
-    mkProducer = newProducer props
+    mkProducer = newProducer NoDeliveryCallback props
 
     clProducer (Left _)     = return ()
     clProducer (Right prod) = closeProducer prod
@@ -114,18 +117,25 @@ runProducer props f =
     runHandler (Left err)   = return $ Left err
     runHandler (Right prod) = f prod
 
--- | Creates a new kafka producer
+-- | Creates a new kafka producer.
 -- A newly created producer must be closed with 'closeProducer' function.
-newProducer :: MonadIO m => ProducerProperties -> m (Either KafkaError KafkaProducer)
-newProducer pps = liftIO $ do
+--
+-- The 'DeliveryCallback' argument determines whether the producer supports
+-- per-message delivery report callbacks:
+--
+--   * 'NoDeliveryCallback' — no delivery reports, lighter weight
+--   * 'WithDeliveryCallback' @cb@ — installs @cb@ as the global delivery callback
+newProducer :: MonadIO m => DeliveryCallback s -> ProducerProperties -> m (Either KafkaError (KafkaProducer s))
+newProducer dcb pps = liftIO $ do
   kc@(KafkaConf kc' _ _) <- kafkaConf (KafkaProps $ (ppKafkaProps pps))
   tc <- topicConf (TopicProps $ (ppTopicProps pps))
 
-  -- add default delivery report callback
-  let Callback setDeliveryCallback = deliveryCallback (const mempty)
-  setDeliveryCallback kc
+  -- install delivery callback only when HasCallbacks
+  case dcb of
+    NoDeliveryCallback     -> pure ()
+    WithDeliveryCallback _ -> installDeliveryCallback dcb kc
 
-  -- set callbacks
+  -- set other callbacks
   forM_ (ppCallbacks pps) (\(Callback setCb) -> setCb kc)
 
   mbKafka <- newRdKafkaT RdKafkaProducer kc'
@@ -140,86 +150,106 @@ newProducer pps = liftIO $ do
 -- Since librdkafka is backed by a queue, this function can return before messages are sent. See
 -- 'flushProducer' to wait for queue to empty.
 produceMessage :: MonadIO m
-               => KafkaProducer
+               => KafkaProducer s
                -> ProducerRecord
                -> m (Maybe KafkaError)
-produceMessage kp m = produceMessage' kp m (pure . mempty) >>= adjustRes
-  where
-    adjustRes = \case
-      Right () -> pure Nothing
-      Left (ImmediateError err) -> pure (Just err)
+produceMessage kp m = liftIO $ do
+  pollEvents kp . Just . Timeout $ 0
+  produceMessageNoPoll kp m
 
 -- | Sends a single message with a registered callback.
 --
 --   The callback can be a long running process, as it is forked by the thread
 --   that handles the delivery reports.
 produceMessage' :: MonadIO m
-                => KafkaProducer
+                => KafkaProducer 'HasCallbacks
                 -> ProducerRecord
                 -> (DeliveryReport -> IO ())
                 -> m (Either ImmediateError ())
-produceMessage' kp msg cb = liftIO $
-  fireCallbacks >> produceMessageNoPoll' kp msg cb
-  where
-    fireCallbacks =
-      pollEvents kp . Just . Timeout $ 0
-
+produceMessage' kp msg cb = liftIO $ do
+  pollEvents kp . Just . Timeout $ 0
+  produceMessageNoPoll' kp msg cb
 
 -- | Like 'produceMessage' but does NOT call 'pollEvents'.
 -- Use this with a dedicated polling thread for high-throughput production.
 -- Without polling, delivery report callbacks will not fire until
 -- 'pollEvents' or 'flushProducer' is called (e.g. from a poller thread).
 produceMessageNoPoll :: MonadIO m
-                     => KafkaProducer
+                     => KafkaProducer s
                      -> ProducerRecord
                      -> m (Maybe KafkaError)
-produceMessageNoPoll kp m = produceMessageNoPoll' kp m (pure . mempty) >>= adjustRes
-  where
-    adjustRes = \case
-      Right () -> pure Nothing
-      Left (ImmediateError err) -> pure (Just err)
+produceMessageNoPoll kp m =
+  produceMessageImpl kp m Nothing >>= \case
+    Right () -> pure Nothing
+    Left (ImmediateError err) -> pure (Just err)
 
 -- | Like 'produceMessage'' but does NOT call 'pollEvents'.
 -- Use this with a dedicated polling thread for high-throughput production.
 produceMessageNoPoll' :: MonadIO m
-                      => KafkaProducer
+                      => KafkaProducer 'HasCallbacks
                       -> ProducerRecord
                       -> (DeliveryReport -> IO ())
                       -> m (Either ImmediateError ())
-produceMessageNoPoll' (KafkaProducer (Kafka k) _ _) msg cb = liftIO $
+produceMessageNoPoll' kp msg cb = produceMessageImpl kp msg (Just cb)
+
+produceMessageImpl :: MonadIO m
+                   => KafkaProducer s
+                   -> ProducerRecord
+                   -> Maybe (DeliveryReport -> IO ())
+                   -> m (Either ImmediateError ())
+produceMessageImpl (KafkaProducer (Kafka k) _ _) msg mcb = liftIO $
   withBS (prValue msg) $ \payloadPtr payloadLength ->
     withBS (prKey msg) $ \keyPtr keyLength ->
-      withHeaders (prHeaders msg) $ \hdrs ->
-        withCString (Text.unpack . unTopicName . prTopic $ msg) $ \topicName -> do
-          bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
-            let opts = [
-                    Topic'RdKafkaVu topicName
-                  , Partition'RdKafkaVu . producePartitionCInt . prPartition $ msg
-                  , MsgFlags'RdKafkaVu (fromIntegral copyMsgFlags)
-                  , Value'RdKafkaVu payloadPtr (fromIntegral payloadLength)
-                  , Key'RdKafkaVu keyPtr (fromIntegral keyLength)
-                  , Opaque'RdKafkaVu (castStablePtrToPtr callbackPtr)
-                  ]
+      withCString (Text.unpack . unTopicName . prTopic $ msg) $ \topicName ->
+        withMaybeCallback mcb $ \opaquePtr -> do
+          let hdrs = headersToList (prHeaders msg)
+              nHeaders = length hdrs
+              hasOpaque = opaquePtr /= nullPtr
+              nTotal = (if hasOpaque then 6 else 5) + nHeaders
+          allocaBytes (nTotal * sizeOf (undefined :: RdKafkaVuT)) $ \arrPtr -> do
+            pokeElemOff arrPtr 0 $ Topic'RdKafkaVu topicName
+            pokeElemOff arrPtr 1 $ Partition'RdKafkaVu (producePartitionCInt $ prPartition msg)
+            pokeElemOff arrPtr 2 $ MsgFlags'RdKafkaVu (fromIntegral copyMsgFlags)
+            pokeElemOff arrPtr 3 $ Value'RdKafkaVu payloadPtr (fromIntegral payloadLength)
+            pokeElemOff arrPtr 4 $ Key'RdKafkaVu keyPtr (fromIntegral keyLength)
+            let hdrStart
+                  | hasOpaque = do
+                      pokeElemOff arrPtr 5 $ Opaque'RdKafkaVu opaquePtr
+                      pure 6
+                  | otherwise = pure 5
+            idx <- hdrStart
+            pokeHeaders hdrs arrPtr idx $ do
+              fptr <- newForeignPtr_ arrPtr
+              code <- bracket (rdKafkaMessageProduceVa' k fptr (fromIntegral nTotal)) rdKafkaErrorDestroy rdKafkaErrorCode
+              handleProduceErrT code >>= \case
+                Just err -> pure . Left . ImmediateError $ err
+                Nothing  -> pure . Right $ ()
+  where
+    pokeHeaders [] _ _ action = action
+    pokeHeaders ((nm, val):rest) arrPtr idx action =
+      BS.useAsCString nm $ \cnm ->
+        withBS (Just val) $ \vp vl -> do
+          pokeElemOff arrPtr idx $ Header'RdKafkaVu cnm vp (fromIntegral vl)
+          pokeHeaders rest arrPtr (idx + 1) action
 
-            code <- bracket (rdKafkaMessageProduceVa k (hdrs ++ opts)) rdKafkaErrorDestroy rdKafkaErrorCode
-            res  <- handleProduceErrT code
-            case res of
-              Just err -> do
-                freeStablePtr callbackPtr
-                pure . Left . ImmediateError $ err
-              Nothing ->
-                pure . Right $ ()
-{-# INLINABLE produceMessageNoPoll' #-}
+    withMaybeCallback Nothing f = f nullPtr
+    withMaybeCallback (Just cb) f =
+      bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
+        res <- f (castStablePtrToPtr callbackPtr)
+        case res of
+          Left _ -> freeStablePtr callbackPtr >> pure res
+          Right _ -> pure res
+{-# INLINABLE produceMessageImpl #-}
 
 -- | Closes the producer.
 -- Will wait until the outbound queue is drained before returning the control.
-closeProducer :: MonadIO m => KafkaProducer -> m ()
+closeProducer :: MonadIO m => KafkaProducer s -> m ()
 closeProducer = flushProducer
 
 -- | Drains the outbound queue for a producer.
 --  This function is also called automatically when the producer is closed
 -- with 'closeProducer' to ensure that all queued messages make it to Kafka.
-flushProducer :: MonadIO m => KafkaProducer -> m ()
+flushProducer :: MonadIO m => KafkaProducer s -> m ()
 flushProducer kp = liftIO $ do
     pollEvents kp (Just $ Timeout 100)
     l <- outboundQueueLength (kpKafkaPtr kp)
@@ -227,20 +257,13 @@ flushProducer kp = liftIO $ do
       then pollEvents kp (Just $ Timeout 0) -- to be sure that all the delivery reports are fired
       else flushProducer kp
 
-flushProducerWithTimeout :: MonadIO m => KafkaProducer -> Timeout -> m KafkaFlushResult
+flushProducerWithTimeout :: MonadIO m => KafkaProducer s -> Timeout -> m KafkaFlushResult
 flushProducerWithTimeout (KafkaProducer (Kafka k) _ _) (Timeout timeout) =
   liftIO (rdKafkaFlush k timeout) >>= \case
     RdKafkaRespErrTimedOut -> pure KafkaFlushTimedOut
     _ -> pure KafkaFlushOk
 ------------------------------------------------------------------------------------
 
-withHeaders :: Headers -> ([RdKafkaVuT] -> IO a) -> IO a
-withHeaders hds = withMany allocHeader (headersToList hds)
-  where
-    allocHeader (nm, val) f =
-      BS.useAsCString nm $ \cnm ->
-          withBS (Just val) $ \vp vl ->
-            f $ Header'RdKafkaVu cnm vp (fromIntegral vl)
 
 withBS :: Maybe BS.ByteString -> (Ptr a -> Int -> IO b) -> IO b
 withBS Nothing f = f nullPtr 0

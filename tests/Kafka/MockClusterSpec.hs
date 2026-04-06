@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Kafka.MockClusterSpec
@@ -32,11 +33,11 @@ mockProducerProps =
      P.brokersList ["localhost:9092"]
   <> P.extraProps (Map.singleton "test.mock.num.brokers" "3")
 
-withMockProducer :: (KafkaProducer -> IO a) -> IO a
+withMockProducer :: (KafkaProducer 'NoCallbacks -> IO a) -> IO a
 withMockProducer = bracket acquire closeProducer
   where
     acquire =
-      newProducer mockProducerProps >>= either (error . ("Mock producer: " <>) . show) pure
+      newProducer NoDeliveryCallback mockProducerProps >>= either (error . ("Mock producer: " <>) . show) pure
 
 mkMessage :: Maybe ByteString -> Maybe ByteString -> ProducerRecord
 mkMessage k v = ProducerRecord
@@ -56,13 +57,13 @@ mkMessageWithHeaders k v h = ProducerRecord
   , prHeaders   = h
   }
 
-getMockBootstraps :: KafkaProducer -> IO String
+getMockBootstraps :: KafkaProducer s -> IO String
 getMockBootstraps (KafkaProducer (Kafka rk) _ _) =
   withHandleMockCluster rk rdKafkaMockClusterBootstraps >>= \case
     Nothing -> error "No mock cluster on this rd_kafka_t"
     Just bs -> pure bs
 
-withMockConsumer :: KafkaProducer -> (KafkaConsumer -> IO a) -> IO a
+withMockConsumer :: KafkaProducer s -> (KafkaConsumer -> IO a) -> IO a
 withMockConsumer producer f = do
   bootstraps <- getMockBootstraps producer
   let props = C.brokersList [BrokerAddress (Text.pack bootstraps)]
@@ -75,7 +76,7 @@ withMockConsumer producer f = do
     f
 
 -- | Run an action against the mock cluster owned by a producer.
-withProducerMockCluster :: KafkaProducer -> (RdKafkaMockClusterTPtr -> IO a) -> IO a
+withProducerMockCluster :: KafkaProducer s -> (RdKafkaMockClusterTPtr -> IO a) -> IO a
 withProducerMockCluster (KafkaProducer (Kafka rk) _ _) f =
   withHandleMockCluster rk f >>= \case
     Nothing -> error "No mock cluster on this rd_kafka_t"

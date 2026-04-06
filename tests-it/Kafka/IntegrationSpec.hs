@@ -234,11 +234,11 @@ testMessages t =
     , ProducerRecord t UnassignedPartition (Just "key") (Just "test from producer (with key)") mempty
     ]
 
-sendMessages :: [ProducerRecord] -> KafkaProducer -> IO (Either KafkaError ())
+sendMessages :: [ProducerRecord] -> KafkaProducer s -> IO (Either KafkaError ())
 sendMessages msgs prod =
   Right <$> (forM_ msgs (produceMessage prod) >> flushProducer prod)
 
-sendMessagesWithHeaders :: [ProducerRecord] -> Headers -> KafkaProducer -> IO (Either KafkaError ())
+sendMessagesWithHeaders :: [ProducerRecord] -> Headers -> KafkaProducer s -> IO (Either KafkaError ())
 sendMessagesWithHeaders msgs hdrs prod =
   Right <$> (forM_ msgs (\msg -> produceMessage prod (msg {prHeaders = hdrs})) >> flushProducer prod)
 

@@ -1,7 +1,10 @@
+{-# LANGUAGE DataKinds        #-}
+{-# LANGUAGE GADTs            #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE LambdaCase #-}
 module Kafka.Producer.Callbacks
 ( deliveryCallback
+, installDeliveryCallback
 , module X
 )
 where
@@ -14,21 +17,20 @@ import           Foreign.StablePtr      (castPtrToStablePtr, deRefStablePtr, fre
 import           Kafka.Callbacks        as X
 import           Kafka.Consumer.Types   (Offset(..))
 import           Kafka.Internal.RdKafka (RdKafkaMessageT(..), RdKafkaRespErrT(..), rdKafkaConfSetDrMsgCb)
-import           Kafka.Internal.Setup   (getRdKafkaConf, Callback(..))
+import           Kafka.Internal.Setup   (getRdKafkaConf, KafkaConf)
 import           Kafka.Internal.Shared  (kafkaRespErr, readTopic, readKey, readPayload, readHeaders)
-import           Kafka.Producer.Types   (ProducerRecord(..), DeliveryReport(..), ProducePartition(..))
+import           Kafka.Producer.Types   (ProducerRecord(..), DeliveryReport(..), DeliveryCallback(..), SupportsCallback(..), ProducePartition(..))
 import           Kafka.Types            (KafkaError(..), TopicName(..))
 import Data.Either (fromRight)
 
--- | Sets the callback for delivery reports.
---
---   /Note: A callback should not be a long-running process as it blocks
---   librdkafka from continuing on the thread that handles the delivery
---   callbacks. For callbacks to individual messsages see
---   'Kafka.Producer.produceMessage\''./
---
-deliveryCallback :: (DeliveryReport -> IO ()) -> Callback
-deliveryCallback callback = Callback $ \kc -> rdKafkaConfSetDrMsgCb (getRdKafkaConf kc) realCb
+-- | Creates a 'DeliveryCallback' value that tags the producer as supporting callbacks.
+deliveryCallback :: (DeliveryReport -> IO ()) -> DeliveryCallback 'HasCallbacks
+deliveryCallback = WithDeliveryCallback
+
+-- | Install a delivery callback on the kafka conf. Only called when 'HasCallbacks'.
+installDeliveryCallback :: DeliveryCallback 'HasCallbacks -> KafkaConf -> IO ()
+installDeliveryCallback (WithDeliveryCallback callback) kc =
+  rdKafkaConfSetDrMsgCb (getRdKafkaConf kc) realCb
   where
     realCb :: t -> Ptr RdKafkaMessageT -> IO ()
     realCb _ mptr =
