@@ -130,7 +130,7 @@ spec = do
                     , prHeaders = mempty
                     }
 
-                res <- produceMessage' prod msg (putMVar var)
+                res <- produceMessageNoPoll prod msg (WithDeliveryCallback (putMVar var))
                 res `shouldBe` Right ()
                 callbackRes <- flushProducer prod *> takeMVar var
                 callbackRes `shouldSatisfy` \case

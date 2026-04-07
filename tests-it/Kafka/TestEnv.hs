@@ -62,8 +62,8 @@ testSubscription :: TopicName -> Subscription
 testSubscription t = topics [t]
               <> offsetReset Earliest
 
-mkProducer :: IO (KafkaProducer 'NoCallbacks)
-mkProducer = newProducer NoDeliveryCallback producerProps >>= \(Right p) -> pure p
+mkProducer :: IO (KafkaProducer 'HasCallbacks)
+mkProducer = newProducer (WithDeliveryCallback (\_ -> pure ())) producerProps >>= \(Right p) -> pure p
 
 mkConsumerWith :: ConsumerProperties -> IO KafkaConsumer
 mkConsumerWith props = do

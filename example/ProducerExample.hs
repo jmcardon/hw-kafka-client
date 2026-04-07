@@ -54,13 +54,13 @@ sendMessages prod = do
   msg1 <- getLine
 
   err1 <- produceMessage prod (mkMessage (Just "zero") (Just $ pack msg1))
-  forM_ err1 print
+  case err1 of Left e -> print e; Right () -> pure ()
 
   putStrLn "One more time!"
   msg2 <- getLine
 
   err2 <- produceMessage prod (mkMessage (Just "key") (Just $ pack msg2))
-  forM_ err2 print
+  case err2 of Left e -> print e; Right () -> pure ()
 
   putStrLn "And the last one..."
   msg3 <- getLine
@@ -86,7 +86,7 @@ sendMessageSync producer record = liftIO $ do
 
   -- Produce the message and use the callback to put the delivery report in the
   -- MVar:
-  res <- produceMessage' producer record (putMVar var)
+  res <- produceMessageNoPoll producer record (WithDeliveryCallback (putMVar var))
 
   case res of
     Left (ImmediateError err) ->
