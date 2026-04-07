@@ -1,7 +1,9 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -61,9 +63,7 @@ module Kafka.Producer
 , runProducer
 , newProducer
 , produceMessage
-, produceMessage'
 , produceMessageNoPoll
-, produceMessageNoPoll'
 , flushProducer
 , closeProducer
 , pollEvents
@@ -146,62 +146,29 @@ newProducer dcb pps = liftIO $ do
       let prod = KafkaProducer (Kafka kafka) kc tc
       return (Right prod)
 
--- | Sends a single message.
--- Since librdkafka is backed by a queue, this function can return before messages are sent. See
--- 'flushProducer' to wait for queue to empty.
-produceMessage :: MonadIO m
+-- | Sends a single message using the default callback for the producer's type.
+-- Polls for delivery reports before producing.
+produceMessage :: forall s m. (MonadIO m, DefaultCallback s)
                => KafkaProducer s
                -> ProducerRecord
-               -> m (Maybe KafkaError)
+               -> m (Either ImmediateError ())
 produceMessage kp m = liftIO $ do
   pollEvents kp . Just . Timeout $ 0
-  produceMessageNoPoll kp m
+  produceMessageNoPoll kp m (defaultCallback @s)
 
--- | Sends a single message with a registered callback.
---
---   The callback can be a long running process, as it is forked by the thread
---   that handles the delivery reports.
-produceMessage' :: MonadIO m
-                => KafkaProducer 'HasCallbacks
-                -> ProducerRecord
-                -> (DeliveryReport -> IO ())
-                -> m (Either ImmediateError ())
-produceMessage' kp msg cb = liftIO $ do
-  pollEvents kp . Just . Timeout $ 0
-  produceMessageNoPoll' kp msg cb
-
--- | Like 'produceMessage' but does NOT call 'pollEvents'.
--- Use this with a dedicated polling thread for high-throughput production.
--- Without polling, delivery report callbacks will not fire until
--- 'pollEvents' or 'flushProducer' is called (e.g. from a poller thread).
+-- | Sends a single message with an explicit 'DeliveryCallback'.
+-- Does NOT call 'pollEvents'.  Use with a dedicated polling thread
+-- for high-throughput production.
 produceMessageNoPoll :: MonadIO m
                      => KafkaProducer s
                      -> ProducerRecord
-                     -> m (Maybe KafkaError)
-produceMessageNoPoll kp m =
-  produceMessageImpl kp m Nothing >>= \case
-    Right () -> pure Nothing
-    Left (ImmediateError err) -> pure (Just err)
-
--- | Like 'produceMessage'' but does NOT call 'pollEvents'.
--- Use this with a dedicated polling thread for high-throughput production.
-produceMessageNoPoll' :: MonadIO m
-                      => KafkaProducer 'HasCallbacks
-                      -> ProducerRecord
-                      -> (DeliveryReport -> IO ())
-                      -> m (Either ImmediateError ())
-produceMessageNoPoll' kp msg cb = produceMessageImpl kp msg (Just cb)
-
-produceMessageImpl :: MonadIO m
-                   => KafkaProducer s
-                   -> ProducerRecord
-                   -> Maybe (DeliveryReport -> IO ())
-                   -> m (Either ImmediateError ())
-produceMessageImpl (KafkaProducer (Kafka k) _ _) msg mcb = liftIO $
+                     -> DeliveryCallback s
+                     -> m (Either ImmediateError ())
+produceMessageNoPoll (KafkaProducer (Kafka k) _ _) msg dcb = liftIO $
   withBS (prValue msg) $ \payloadPtr payloadLength ->
     withBS (prKey msg) $ \keyPtr keyLength ->
       withCString (Text.unpack . unTopicName . prTopic $ msg) $ \topicName ->
-        withMaybeCallback mcb $ \opaquePtr -> do
+        withDeliveryCallback dcb $ \opaquePtr -> do
           let hdrs = headersToList (prHeaders msg)
               nHeaders = length hdrs
               hasOpaque = opaquePtr /= nullPtr
@@ -231,15 +198,16 @@ produceMessageImpl (KafkaProducer (Kafka k) _ _) msg mcb = liftIO $
         withBS (Just val) $ \vp vl -> do
           pokeElemOff arrPtr idx $ Header'RdKafkaVu cnm vp (fromIntegral vl)
           pokeHeaders rest arrPtr (idx + 1) action
+{-# INLINABLE produceMessageNoPoll #-}
 
-    withMaybeCallback Nothing f = f nullPtr
-    withMaybeCallback (Just cb) f =
-      bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
-        res <- f (castStablePtrToPtr callbackPtr)
-        case res of
-          Left _ -> freeStablePtr callbackPtr >> pure res
-          Right _ -> pure res
-{-# INLINABLE produceMessageImpl #-}
+withDeliveryCallback :: DeliveryCallback s -> (Ptr () -> IO (Either ImmediateError ())) -> IO (Either ImmediateError ())
+withDeliveryCallback NoDeliveryCallback f = f nullPtr
+withDeliveryCallback (WithDeliveryCallback cb) f =
+  bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
+    res <- f (castStablePtrToPtr callbackPtr)
+    case res of
+      Left _ -> freeStablePtr callbackPtr >> pure res
+      Right _ -> pure res
 
 -- | Closes the producer.
 -- Will wait until the outbound queue is drained before returning the control.

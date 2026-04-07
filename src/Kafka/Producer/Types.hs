@@ -15,6 +15,7 @@ module Kafka.Producer.Types
 ( KafkaProducer(..)
 , SupportsCallback(..)
 , DeliveryCallback(..)
+, DefaultCallback(..)
 , ProducerRecord(..)
 , ProducePartition(..)
 , DeliveryReport(..)
@@ -33,11 +34,26 @@ import Kafka.Types          (KafkaError (..), TopicName (..), Headers)
 -- | Whether a 'KafkaProducer' supports delivery report callbacks.
 data SupportsCallback = HasCallbacks | NoCallbacks
 
--- | GADT that carries an optional delivery callback, determining
--- the 'SupportsCallback' tag at the type level.
+-- | GADT that carries an optional delivery callback.
+--
+-- Used both at producer creation ('newProducer') to determine the
+-- producer's callback support, and at produce time to optionally
+-- attach a per-message callback.
 data DeliveryCallback (s :: SupportsCallback) where
   NoDeliveryCallback   :: DeliveryCallback 'NoCallbacks
   WithDeliveryCallback :: (DeliveryReport -> IO ()) -> DeliveryCallback 'HasCallbacks
+
+-- | Provides a default 'DeliveryCallback' based on the type-level
+-- 'SupportsCallback' tag.  Useful for convenience functions like
+-- 'produceMessage' that don't take an explicit callback.
+class DefaultCallback (s :: SupportsCallback) where
+  defaultCallback :: DeliveryCallback s
+
+instance DefaultCallback 'NoCallbacks where
+  defaultCallback = NoDeliveryCallback
+
+instance DefaultCallback 'HasCallbacks where
+  defaultCallback = WithDeliveryCallback (\_ -> pure ())
 
 -- | The main type for Kafka message production, used e.g. to send messages.
 --
