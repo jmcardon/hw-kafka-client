@@ -131,7 +131,7 @@ spec = do
                     }
 
                 res <- produceMessageNoPoll prod msg (WithDeliveryCallback (putMVar var))
-                res `shouldBe` Right ()
+                res `shouldBe` Nothing
                 callbackRes <- flushProducer prod *> takeMVar var
                 callbackRes `shouldSatisfy` \case
                   DeliverySuccess _ _ -> True

@@ -100,7 +100,7 @@ spec = describe "Mock Cluster" $ do
   it "can produce a message without error" $
     withMockProducer $ \producer -> do
       err <- produceMessage producer (mkMessage Nothing (Just "hello mock"))
-      err `shouldBe` Right ()
+      err `shouldBe` Nothing
 
   it "can produce and flush without error" $
     withMockProducer $ \producer -> do
@@ -113,9 +113,9 @@ spec = describe "Mock Cluster" $ do
       e1 <- produceMessage producer (mkMessage (Just "k1") (Just "v1"))
       e2 <- produceMessage producer (mkMessage (Just "k2") (Just "v2"))
       e3 <- produceMessage producer (mkMessage Nothing (Just "v3"))
-      e1 `shouldBe` Right ()
-      e2 `shouldBe` Right ()
-      e3 `shouldBe` Right ()
+      e1 `shouldBe` Nothing
+      e2 `shouldBe` Nothing
+      e3 `shouldBe` Nothing
       res <- flushProducerWithTimeout producer (Timeout 5000)
       res `shouldBe` KafkaFlushOk
 

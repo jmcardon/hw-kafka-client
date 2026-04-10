@@ -151,7 +151,7 @@ newProducer dcb pps = liftIO $ do
 produceMessage :: forall s m. (MonadIO m, DefaultCallback s)
                => KafkaProducer s
                -> ProducerRecord
-               -> m (Either ImmediateError ())
+               -> m (Maybe KafkaError)
 produceMessage kp m = liftIO $ do
   pollEvents kp . Just . Timeout $ 0
   produceMessageNoPoll kp m (defaultCallback @s)
@@ -163,7 +163,7 @@ produceMessageNoPoll :: MonadIO m
                      => KafkaProducer s
                      -> ProducerRecord
                      -> DeliveryCallback s
-                     -> m (Either ImmediateError ())
+                     -> m (Maybe KafkaError)
 produceMessageNoPoll (KafkaProducer (Kafka k) _ _) msg dcb = liftIO $
   withBS (prValue msg) $ \payloadPtr payloadLength ->
     withBS (prKey msg) $ \keyPtr keyLength ->
@@ -189,8 +189,8 @@ produceMessageNoPoll (KafkaProducer (Kafka k) _ _) msg dcb = liftIO $
               fptr <- newForeignPtr_ arrPtr
               code <- bracket (rdKafkaMessageProduceVa' k fptr (fromIntegral nTotal)) rdKafkaErrorDestroy rdKafkaErrorCode
               handleProduceErrT code >>= \case
-                Just err -> pure . Left . ImmediateError $ err
-                Nothing  -> pure . Right $ ()
+                Just err -> pure (Just err)
+                Nothing  -> pure Nothing
   where
     pokeHeaders [] _ _ action = action
     pokeHeaders ((nm, val):rest) arrPtr idx action =
@@ -200,14 +200,14 @@ produceMessageNoPoll (KafkaProducer (Kafka k) _ _) msg dcb = liftIO $
           pokeHeaders rest arrPtr (idx + 1) action
 {-# INLINABLE produceMessageNoPoll #-}
 
-withDeliveryCallback :: DeliveryCallback s -> (Ptr () -> IO (Either ImmediateError ())) -> IO (Either ImmediateError ())
+withDeliveryCallback :: DeliveryCallback s -> (Ptr () -> IO (Maybe KafkaError)) -> IO (Maybe KafkaError)
 withDeliveryCallback NoDeliveryCallback f = f nullPtr
 withDeliveryCallback (WithDeliveryCallback cb) f =
   bracketOnError (newStablePtr cb) freeStablePtr $ \callbackPtr -> do
     res <- f (castStablePtrToPtr callbackPtr)
     case res of
-      Left _ -> freeStablePtr callbackPtr >> pure res
-      Right _ -> pure res
+      Just _ -> freeStablePtr callbackPtr >> pure res
+      Nothing -> pure res
 
 -- | Closes the producer.
 -- Will wait until the outbound queue is drained before returning the control.
